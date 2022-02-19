@@ -1,0 +1,535 @@
+Run TaskCat from the Command Line
+In this section, you will learn how to use manually run TaskCat automated tests on CloudFormation templates from the command line.
+
+TaskCat is provided as a Python package that you will download. This example assumes you have access to an AWS account and have established the necessary permissions. In order to show specific directory names, it also assumes you are using AWS Cloud9 for your IDE. If you are not, you should be able to simply modify the directory names accordingly.
+
+Install Python and TaskCat
+TaskCat uses Python 3 so you will need to install Python, pip (the package installer for Python), and TaskCat via pip in AWS Cloud9.
+
+Here are the instructions for installing these tools using the Cloud9 terminal:
+
+cd ~/environment
+sudo yum -y update
+python --version
+curl -O https://bootstrap.pypa.io/get-pip.py
+python3 get-pip.py --user
+sudo pip install --upgrade pip
+pip3 install taskcat --user
+To verify TaskCat is installed, type taskcat --version from the command line. You should see something like this returned from the command line:
+
+taskcat --version
+
+ _            _             _   
+| |_ __ _ ___| | _____ __ _| |_ 
+| __/ _` / __| |/ / __/ _` | __|
+| || (_| \__ \    (_| (_| | |_ 
+ \__\__,_|___/_|\_\___\__,_|\__|
+                                
+
+
+version 0.9.8
+0.9.8
+For the purposes of these examples, I am assuming you are using version 0.9 or above.
+
+Configure TaskCat
+You can run TaskCat in several ways and there are a few command line options that the tool provides. I will take you through a simple example that is currently running on an open source repository that I own.
+
+Create a new GitHub repository
+In this section, you will create a new GitHub repository to store a CloudFormation so that you can run TaskCat against this and other CloudFormation templates.
+
+Here are the steps for creating a new repository in GitHub:
+
+In the upper-right corner of any page on GitHub, use the drop-down menu, and select New repository.
+Type taskcat-example as the name for your repository.
+Type Repository to run TaskCat examples. for the description of your repository.
+Choose to make the repository either public or private.
+Select Initialize this repository with a README.
+Click Create repository.
+For more information, see Create a repo.
+
+Clone the Repository
+From your Cloud9 terminal, type the following (replacing YOURGITHUBUSERID with your GitHub userid):
+
+cd ~/environment
+git clone https://github.com/YOURGITHUBUSERID/taskcat-example.git
+cd taskcat-example
+Create a .taskcat.yml file
+From your Cloud9 terminal, type the following:
+
+cd ~/environment/taskcat-example
+touch .taskcat.yml
+Create a CloudFormation Template
+From your Cloud9 terminal, type the following:
+
+cd ~/environment/taskcat-example
+touch sqs.yml
+Open the sqs.yml and copy the contents below and save the file.
+
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Creates an SQS Queue.
+Resources:
+  MyQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName:
+        Fn::Join:
+        - ''
+        - - SampleQueue-
+          - Ref: AWS::StackName
+Outputs:
+  MyQueueARN:
+    Value:
+      Ref: MyQueue
+Update .taskcat.yml
+From your Cloud9 terminal, copy and paste the following into your .taskcat.yml file and save the contents.
+
+project:
+  name: taskcat-example
+  regions:
+    - us-east-1
+    - us-east-2
+tests:
+  sqs-test:
+    template: ./sqs.yml
+This is the configuration file that TaskCat uses to know which CloudFormation templates to run and how to run them. You can pass in parameters, use TaskCat tokens to generate passwords and other values, and perform other configuration. Here’s an example of passing in a parameter to a CloudFormation template:
+
+tests:
+  lesson5-ebs:
+    parameters:
+      AvailabilityZones: '$[taskcat_genaz_1]'
+    template: ./lesson5-rest/ceoa-5-ebs.yml
+$[taskcat_genaz_1] is a TaskCat token that obtains a single availability zone for a region (if I choose $[taskcat_genaz_2], it selects two AZs). You use parameters to list the parameters and values when launching the CloudFormation stack. For more information on TaskCat tokens see Preparing TaskCat input files.
+
+Run TaskCat
+From your Cloud9 terminal, type the following command to run TaskCat against your CloudFormation template.
+
+taskcat test run
+TaskCat will create and delete CloudFormation stacks for all the files listed in the .taskcat.yml file. In this example, it will create and delete a total of two stacks – one for each listed AWS region in the .taskcat.yml. When successful, the results will look similar to the image below.
+
+
+
+Once it’s complete, you can open the index.html generated in the taskcat_outputs directory to view the TaskCat dashboard. To do this, right click on the index.html file in Cloud9 and click Preview on the context menu. A web page should display that looks similar to the image below.
+
+
+
+Creating a Pipeline to Run TaskCat
+In this example, you will see how you can create a CloudFormation template that automatically provisions CodePipeline, a GitHub source provider, a CodeBuild project to run TaskCat, and another CodeBuild project to deploy the TaskCat dashboard. This way you can run TaskCat automatically without needing to manually type commands every time.
+
+Deployment Steps
+There are four main steps in launching this solution: prepare an AWS account, create and store source files, launch the CloudFormation stack, and test the deployment. Each is described in more detail in this section. Please note that you are responsible for any fees incurred while creating and launching your solution.
+
+
+
+
+
+
+Step 1. Prerequisites
+This example assumes you have access to an AWS account and have established the necessary permissions.
+
+Store your GitHub Personal Access Token in AWS Secrets Manager
+In order for CodePipeline to use GitHub as a source provider it needs your GitHub personal access token. Since we want to run all changes automatically and we want to be secure, you need to store this secret in an encrypted location. You will do this in AWS Secrets Manager. Here are the steps:
+
+Go to the AWS Secrets Manager Console.
+Click Secrets and click the Store a new secret button.
+Click on the Other type of secrets radio button.
+Click on the Plaintext tab and enter the GitHub token value in the text area. You can get this token by going to Personal access tokens and creating one or using an existing token. To create a GitHub token, see the instructions here.
+Leave the Select the encryption key dropdown with the DefaultEncryptionKey option selected.
+Click the Next button.
+Enter github/personal-access-token for the Secret name and description on the Secret name and description page and click Next.
+On the Configure automatic rotation page, select the Disable automatic rotation radio button.
+Click the Next button.
+On the Review page, click the Store button.
+
+
+
+
+
+
+Step 2. Create and Store Source Files
+Next, you will create two source files that will be committed to your GitHub repository. From your AWS Cloud9 terminal, type the following to create and save two empty source files:
+
+touch buildspec.yml
+touch pipeline-taskcat.yml
+
+copy below contents at buildspec.yml
+
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      python: 3.7
+    commands:
+      - echo install phase started on `date`
+      - python --version
+      - 'curl -O https://bootstrap.pypa.io/get-pip.py'
+      - python3 get-pip.py
+      - pip install --upgrade pip
+      - pip3 install taskcat
+      - pip3 install --upgrade taskcat
+  build:
+    commands:
+      - echo Build phase started on `date`
+      # - taskcat test run --no-delete
+      # - taskcat test run -k
+      - taskcat test run
+  post_build:
+    commands:
+      - echo Build completed on `date`
+artifacts:
+  files:
+    - '**/*'
+
+pipeline-taskcat.yml
+Copy below contents at  pipeline-taskcat.yml and save it to your local file of the same name in your Cloud9 environment. 
+This CloudFormation template provisions two CodeBuild projects, IAM Permissions, S3 Buckets, and a deployment pipeline in AWS CodePipeline. 
+Once this CloudFormation stack is successfully launched, a pipeline will run in which CodeBuild will run CloudFormation tests in TaskCat, 
+create a static website in S3, and copy the TaskCat dashboard files to this website.
+
+---
+AWSTemplateFormatVersion: '2010-09-09'
+Description: CodePipeline with CodeBuild workflow to run TaskCat test CloudFormation templates
+Parameters:
+  GitHubUser:
+    Type: String
+    Description: GitHub User
+    Default: "PaulDuvall"
+  GitHubRepo:
+    Type: String
+    Description: GitHub Repo to pull from. Only the Name. not the URL
+    Default: "aws-encryption-workshop"
+  GitHubBranch:
+    Type: String
+    Description: GitHub Branch
+    Default: "master"
+  GitHubToken:
+    NoEcho: true
+    Type: String
+    Default: '{{resolve:secretsmanager:github/personal-access-token-1:SecretString}}'
+    Description: GitHub Token. Must be defined in AWS Secrets Manager and here https://github.com/settings/tokens
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "GitHub Configuration"
+        Parameters:
+          - GitHubToken
+          - GitHubUser
+          - GitHubRepo
+          - GitHubBranch
+    ParameterLabels:
+      GitHubToken:
+        default: GitHub OAuth2 Token
+      GitHubUser: 
+        default: GitHub User/Org Name
+      GitHubRepo: 
+        default: GitHub Repository Name
+      GitHubBranch: 
+        default: GitHub Branch Name
+Resources:
+  SiteBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      AccessControl: PublicRead
+      WebsiteConfiguration:
+        IndexDocument: index.html
+  CodePipelineRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codepipeline.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: codepipeline-service
+        PolicyDocument:
+          Statement:
+          - Action:
+            - logs:*
+            - lambda:*
+            - cloudwatch:*
+            - codebuild:*
+            - s3:*
+            Resource: "*"
+            Effect: Allow
+          - Action:
+            - s3:PutObject
+            Resource:
+            - arn:aws:s3:::codepipeline*
+            Effect: Allow
+          - Action:
+            - logs:*
+            - lambda:*
+            - cloudwatch:*
+            - codebuild:*
+            - s3:*
+            - ec2:*
+            - iam:PassRole
+            Resource: "*"
+            Effect: Allow
+          Version: '2012-10-17'
+  CodeBuildRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - codebuild.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+      Policies:
+      - PolicyName: codebuild-service
+        PolicyDocument:
+          Statement:
+          - Action:
+            - apigateway:*
+            - cloudformation:*
+            - cloudwatch:*
+            - cloudtrail:*
+            - codebuild:*
+            - codecommit:*
+            - codepipeline:*
+            - config:*
+            - dynamodb:*
+            - ec2:*
+            - iam:*
+            - kms:*
+            - lambda:*
+            - logs:*
+            - redshift:*
+            - rds:*
+            - secretsmanager:*
+            - s3:*
+            - sns:*
+            - sqs:*
+            Effect: Allow
+            Resource: "*"
+          Version: '2012-10-17'
+  CodeBuildSetup:
+    Type: AWS::CodeBuild::Project
+    DependsOn: CodeBuildRole
+    Properties:
+      Description: Setup Test Files. For example uploading to S3
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+        EnvironmentVariables:
+          - Name: PIPELINE_BUCKET
+            Type: PLAINTEXT
+            Value:
+              Fn::Sub: ${PipelineBucket}
+      Source:
+        Type: GITHUB
+        Location: !Sub https://github.com/${GitHubUser}/${GitHubRepo}.git
+        BuildSpec: buildspec-setup.yml
+      TimeoutInMinutes: 10
+  CodeBuildCleanup:
+    Type: AWS::CodeBuild::Project
+    DependsOn: CodeBuildRole
+    Properties:
+      Description: Setup Test Files. For example uploading to S3
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: NO_ARTIFACTS
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+      Source:
+        Type: GITHUB
+        Location: !Sub https://github.com/${GitHubUser}/${GitHubRepo}.git
+        BuildSpec: buildspec-cleanup.yml
+      TimeoutInMinutes: 10
+  CodeBuildTaskCatTest:
+    Type: AWS::CodeBuild::Project
+    DependsOn: CodeBuildRole
+    Properties:
+      Description: Run TaskCat
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+      Source:
+        Type: CODEPIPELINE
+      TimeoutInMinutes: 60
+  CodeBuildDashboard:
+    Type: AWS::CodeBuild::Project
+    DependsOn: CodeBuildRole
+    Properties:
+      Description: Deploy site to S3
+      ServiceRole: !GetAtt CodeBuildRole.Arn
+      Artifacts:
+        Type: CODEPIPELINE
+      Environment:
+        Type: LINUX_CONTAINER
+        ComputeType: BUILD_GENERAL1_SMALL
+        Image: "aws/codebuild/amazonlinux2-x86_64-standard:3.0"
+      Source:
+        Type: CODEPIPELINE
+        BuildSpec: !Sub |
+          version: 0.2
+          phases:
+            install:
+              runtime-versions:
+                python: 3.7
+            post_build:
+              commands:
+                - aws s3 cp --recursive --acl public-read ./taskcat_outputs s3://${SiteBucket}/ 
+          artifacts:
+            type: zip
+            files:
+              - ./index.html
+      TimeoutInMinutes: 10
+  PipelineBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Delete
+  Pipeline:
+    Type: AWS::CodePipeline::Pipeline
+    Properties:
+      RoleArn: !GetAtt CodePipelineRole.Arn
+      Stages:
+      - Name: Source
+        Actions:
+        - InputArtifacts: []
+          Name: Source
+          ActionTypeId:
+            Category: Source
+            Owner: ThirdParty
+            Version: '1'
+            Provider: GitHub
+          OutputArtifacts:
+          - Name: SourceArtifacts
+          Configuration:
+            Owner: !Ref GitHubUser
+            Repo: !Ref GitHubRepo
+            Branch: !Ref GitHubBranch
+            OAuthToken: !Ref GitHubToken
+          RunOrder: 1
+      - Name: Build
+        Actions:
+        - InputArtifacts:
+          - Name: SourceArtifacts
+          Name: Setup
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          OutputArtifacts: 
+          - Name: SetupArtifacts
+          Configuration:
+            ProjectName:
+              Ref: CodeBuildSetup
+          RunOrder: 1
+        - InputArtifacts:
+          - Name: SetupArtifacts
+          Name: RunTaskCat
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          OutputArtifacts: 
+          - Name: TaskCatArtifacts
+          Configuration:
+            ProjectName:
+              Ref: CodeBuildTaskCatTest
+          RunOrder: 10
+        - InputArtifacts:
+          - Name: TaskCatArtifacts
+          Name: TaskCatDashboard
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          OutputArtifacts: [] 
+          Configuration:
+            ProjectName:
+              Ref: CodeBuildDashboard
+          RunOrder: 20
+      - Name: Cleanup
+        Actions:
+        - InputArtifacts:
+          - Name: SourceArtifacts
+          Name: RemoveS3Buckets
+          ActionTypeId:
+            Category: Test
+            Owner: AWS
+            Version: '1'
+            Provider: CodeBuild
+          OutputArtifacts: []
+          Configuration:
+            ProjectName:
+              Ref: CodeBuildCleanup
+          RunOrder: 1
+      ArtifactStore:
+        Type: S3
+        Location: !Ref PipelineBucket
+Outputs:
+  PipelineUrl:
+    Value: !Sub https://console.aws.amazon.com/codepipeline/home?region=${AWS::Region}#/view/${Pipeline}
+    Description: CodePipeline URL
+  TaskCatDashboardUrl:
+    Value: !Sub http://${SiteBucket}.s3-website-us-east-1.amazonaws.com
+    Description: URL for TaskCat Dashboard (Available after the CodePipeline completes)
+	
+	
+Add .gitignore file and add below 
+# TaskCat
+taskcat_outputs
+
+There are a few things to note in this CloudFormation template. The default value for the GitHubToken parameter is configured as shown below. This assumes that you created the secrets in AWS Secrets Manager and used 
+the name github/personal-access-token. If you have not, you will need to make changes for the CloudFormation template to work.
+
+Default: '{{resolve:secretsmanager:github/personal-access-token:SecretString}}'
+Also, there are two CodeBuild projects in this template. CodeBuildTest runs the TaskCat tests and is configured to run from the CodePipeline resource. CodeBuildWebsite copies the files generated and stored in the taskcat_outputs folder to an S3 bucket and then configures the S3 bucket to be a public static website. CodePipeline is also configured to run this CodeBuild project.
+
+This CloudFormation stack configures CodePipeline to run with ever GitHub change. If you’d rather run these tests on a scheduled basis, you will need to make changes to the configuration.
+
+Add and Commit the Source files to GitHub
+From your AWS Cloud9 terminal, type the following to add and commit files to your GitHub repository:
+
+cd ~/environment/taskcat-example
+git add .
+git commit -am "add CloudFormation and CodeBuild files" && git push
+
+
+
+
+
+
+
+Step 3. Launch the Stack
+From your AWS Cloud9 environment, type the following (replacing jm01012021 with your GitHub userid):
+
+aws cloudformation create-stack --stack-name pipeline-taskcat --capabilities CAPABILITY_NAMED_IAM --disable-rollback --template-body file:///home/ec2-user/environment/taskcat-example/pipeline-taskcat.yml --parameters ParameterKey=GitHubUser,ParameterValue=jm01012021 ParameterKey=GitHubRepo,ParameterValue=taskcat-example
+
+Step 4. Test the Deployment
+Verify the CloudFormation template has launched by going to the CloudFormation dashboard.
+
+Once the stack is CREATE_COMPLETE, select it and click on the Outputs tab. It should look similar to the image below.
+
+
+
+Now, click on the PipelineUrl Output. This will launch the pipeline you automatically provisioned in CodePipeline – as shown below.
+
+
+
+Once it has successfully run through all the stages in the pipeline, you will click on the TaskCatDashboardUrl Output value. This launches a website containing the TaskCat dashboard. You can click on View Logs for additional detail.
